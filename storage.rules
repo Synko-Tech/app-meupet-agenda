@@ -1,0 +1,67 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userActive() {
+      return firestore.get(
+        /databases/(default)/documents/users/$(request.auth.uid)
+      ).data.ativo == true;
+    }
+
+    function membershipDoc(businessId) {
+      return firestore.get(
+        /databases/(default)/documents/businesses/$(businessId)/members/$(request.auth.uid)
+      );
+    }
+
+    function isBusinessMember(businessId) {
+      return signedIn()
+        && userActive()
+        && firestore.exists(
+          /databases/(default)/documents/businesses/$(businessId)/members/$(request.auth.uid)
+        );
+    }
+
+    function hasBusinessRole(businessId, roles) {
+      return isBusinessMember(businessId)
+        && membershipDoc(businessId).data.role in roles
+        && membershipDoc(businessId).data.ativo == true;
+    }
+
+    function isBusinessManager(businessId) {
+      return hasBusinessRole(businessId, ['owner', 'admin']);
+    }
+
+    function isBusinessStaff(businessId) {
+      return hasBusinessRole(businessId, ['owner', 'admin', 'collaborator']);
+    }
+
+    // Applies to create/update writes only; deletes carry no request.resource
+    // (checked by callers via `request.resource == null`).
+    function validImage() {
+      return request.resource != null
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp)');
+    }
+
+    match /users/{userId}/{allPaths=**} {
+      // Usuario inativo ou sem perfil nao usa Storage (politica de bloqueio):
+      // perfil desativado revoga tambem o proprio caminho, nao so o staff.
+      allow read: if signedIn() && userActive()
+        && request.auth.uid == userId;
+      allow write: if signedIn() && userActive()
+        && request.auth.uid == userId
+        && (request.resource == null || validImage());
+    }
+
+    match /businesses/{businessId}/{allPaths=**} {
+      allow read: if isBusinessStaff(businessId);
+      allow write: if isBusinessManager(businessId)
+        && (request.resource == null || validImage());
+    }
+  }
+}

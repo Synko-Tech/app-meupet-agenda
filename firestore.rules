@@ -1,0 +1,288 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function hasProfile() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function hasActiveProfile() {
+      return hasProfile() && userDoc().data.ativo == true;
+    }
+
+    function isSuperAdmin() {
+      return hasActiveProfile() && userDoc().data.role == 'super_admin';
+    }
+
+    // Membership canonic em businesses/{businessId}/members/{uid}.
+    function membershipDoc(businessId) {
+      return get(
+        /databases/$(database)/documents/businesses/$(businessId)/members/$(request.auth.uid)
+      );
+    }
+
+    function isBusinessMember(businessId) {
+      return hasActiveProfile()
+        && exists(
+          /databases/$(database)/documents/businesses/$(businessId)/members/$(request.auth.uid)
+        );
+    }
+
+    function hasBusinessRole(businessId, roles) {
+      return isBusinessMember(businessId)
+        && membershipDoc(businessId).data.role in roles
+        && membershipDoc(businessId).data.ativo == true;
+    }
+
+    function isBusinessOwner(businessId) {
+      return hasBusinessRole(businessId, ['owner']);
+    }
+
+    function isBusinessManager(businessId) {
+      return hasBusinessRole(businessId, ['owner', 'admin']);
+    }
+
+    function isBusinessStaff(businessId) {
+      return hasBusinessRole(businessId, ['owner', 'admin', 'collaborator']);
+    }
+
+    function ownsBusinessRecord(userField) {
+      return signedIn()
+        && hasActiveProfile()
+        && resource.data[userField] == request.auth.uid;
+    }
+
+    function roleWasNotChanged() {
+      return !request.resource.data.diff(resource.data)
+        .affectedKeys()
+        .hasAny(['role', 'tipo_usuario', 'permissions', 'claims']);
+    }
+
+    // Restringe uma atualizacao aos campos permitidos (allowlist por colecao).
+    function changedKeysOnly(allowedKeys) {
+      return request.resource.data.diff(resource.data)
+        .affectedKeys()
+        .hasOnly(allowedKeys);
+    }
+
+    function statusWasNotChanged() {
+      return !request.resource.data.diff(resource.data)
+        .affectedKeys()
+        .hasAny(['status']);
+    }
+
+    function publicClientProfileCreate(userId) {
+      return signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.role == 'client'
+        && request.resource.data.ativo == true
+        && (!('tipo_usuario' in request.resource.data)
+          || request.resource.data.tipo_usuario == 'client')
+        && request.resource.data.keys().hasAll([
+          'nome', 'email', 'telefone', 'role', 'tipo_usuario', 'ativo',
+          'createdAt', 'updatedAt',
+        ])
+        && request.resource.data.keys().hasOnly([
+          'nome', 'email', 'telefone', 'role', 'tipo_usuario', 'ativo',
+          'createdAt', 'updatedAt',
+        ]);
+    }
+
+    function adminProfileCreate() {
+      return isSuperAdmin()
+        && request.resource.data.role in ['client', 'collaborator'];
+    }
+
+    function superAdminProfileCreate() {
+      return isSuperAdmin()
+        && request.resource.data.role in [
+          'client',
+          'collaborator',
+          'admin',
+          'super_admin',
+        ];
+    }
+
+    // =====================================================================
+    // Identidade global
+    // =====================================================================
+    match /users/{userId} {
+      allow read: if signedIn() && (request.auth.uid == userId || isSuperAdmin());
+      allow create: if publicClientProfileCreate(userId)
+        || adminProfileCreate()
+        || superAdminProfileCreate();
+
+      // O proprio usuario pode editar dados cadastrais, mas nunca permissao.
+      // fcmTokens: tokens de notificacao gravados pelo proprio app do usuario.
+      allow update: if signedIn()
+        && request.auth.uid == userId
+        && roleWasNotChanged()
+        && changedKeysOnly(['nome', 'telefone', 'updatedAt', 'fcmTokens']);
+
+      // Apenas super_admin da plataforma gerencia roles globais, restrito
+      // aos campos administrativos (role/tipo_usuario/ativo/updatedAt) —
+      // campos arbitrarios (incluindo CPF/endereco) sao bloqueados.
+      allow update: if isSuperAdmin()
+        && changedKeysOnly(['role', 'tipo_usuario', 'ativo', 'updatedAt']);
+      allow delete: if isSuperAdmin();
+
+      // Projecao de memberships: somente o proprio usuario.
+      match /businessMemberships/{businessId} {
+        allow read: if signedIn() && request.auth.uid == userId;
+        allow write: if false;
+      }
+    }
+
+    // =====================================================================
+    // Lojas (tenants)
+    // =====================================================================
+    match /businesses/{businessId} {
+      // Leitura publica: qualquer cliente logado pode listar/buscar lojas
+      // para encontrar estabelecimentos. Escrita permanece restrita.
+      allow read: if signedIn();
+      // Owner administra a configuracao publica da loja.
+      allow update: if isBusinessOwner(businessId)
+        && changedKeysOnly([
+          'nome', 'descricao', 'timezone', 'status', 'updatedAt',
+        ]);
+      allow create, delete: if isSuperAdmin();
+
+      match /members/{uid} {
+        // Cada membro le a si mesmo; staff gerencia (e lista) membros.
+        allow read: if signedIn() && isBusinessMember(businessId)
+          && (request.auth.uid == uid || isBusinessManager(businessId));
+        // Owner gerencia membros; nunca a si mesmo (evita desistencia unica).
+        allow create, update, delete: if isBusinessOwner(businessId)
+          && uid != request.auth.uid;
+      }
+
+      // -------------------------------------------------------------------
+      // Catalogo
+      // -------------------------------------------------------------------
+      match /services/{serviceId} {
+        allow read: if signedIn() && isBusinessMember(businessId);
+        allow write: if isBusinessManager(businessId);
+      }
+
+      match /packages/{packageId} {
+        allow read: if signedIn() && isBusinessMember(businessId);
+        allow write: if isBusinessManager(businessId);
+      }
+
+      // -------------------------------------------------------------------
+      // Operacao por cliente
+      // -------------------------------------------------------------------
+      match /customerPackages/{customerPackageId} {
+        allow read: if signedIn() && isBusinessMember(businessId)
+          && (ownsBusinessRecord('id_cliente') || isBusinessStaff(businessId));
+        // Ativacao, saldo e status sao exclusivos do backend.
+        allow create, update, delete: if false;
+      }
+
+      match /appointments/{appointmentId} {
+        allow read: if signedIn() && isBusinessMember(businessId)
+          && (ownsBusinessRecord('id_cliente') || isBusinessStaff(businessId));
+        allow create, update, delete: if false;
+      }
+
+      match /payments/{paymentId} {
+        allow read: if signedIn() && isBusinessMember(businessId)
+          && (ownsBusinessRecord('id_cliente') || isBusinessStaff(businessId));
+        allow create, update, delete: if false;
+      }
+
+      match /notifications/{notificationId} {
+        allow read: if signedIn() && isBusinessMember(businessId)
+          && (ownsBusinessRecord('id_usuario') || isBusinessStaff(businessId));
+        // Staff cria notificacoes apenas para membros da loja (ou si mesmo);
+        // em update o destinatario (id_usuario) nao pode mudar.
+        allow create: if isBusinessStaff(businessId)
+          && (
+            request.resource.data.id_usuario == request.auth.uid
+            || exists(
+              /databases/$(database)/documents/businesses/$(businessId)/members/$(request.resource.data.id_usuario)
+            )
+          );
+        allow update: if isBusinessStaff(businessId)
+          && request.resource.data.id_usuario
+            == resource.data.id_usuario;
+      }
+
+      match /packageUsage/{usageId} {
+        allow read: if signedIn() && isBusinessMember(businessId)
+          && (ownsBusinessRecord('id_cliente') || isBusinessStaff(businessId));
+        allow create, update, delete: if false;
+      }
+
+      // Travas de horario e exclusivas do backend (create/cancel).
+      match /appointmentSlots/{slotId} {
+        allow read, write: if false;
+      }
+    }
+
+    // =====================================================================
+    // Dados privados (CPF e endereco)
+    // =====================================================================
+    // userPrivate/{uid}: somente o dono ou super_admin leem o proprio
+    // documento. Escritas sao exclusivas do backend (callable), nunca
+    // direto do cliente.
+    match /userPrivate/{userId} {
+      allow get: if signedIn()
+        && (request.auth.uid == userId || isSuperAdmin());
+      allow list: if false;
+      allow create, update, delete: if false;
+    }
+
+    // cpfClaims/{claimId}: claim de unicidade do CPF (HMAC). Invisivel
+    // para clientes; criado apenas pelo backend.
+    match /cpfClaims/{claimId} {
+      allow read, write: if false;
+    }
+
+    // cnpjClaims/{claimId}: claim de unicidade do CNPJ (HMAC). Invisivel
+    // para clientes; criado apenas pelo backend.
+    match /cnpjClaims/{claimId} {
+      allow read, write: if false;
+    }
+
+    // =====================================================================
+    // Interno (backend exclusivo)
+    // =====================================================================
+    match /merchantConnections/{businessId} {
+      allow read, write: if false;
+    }
+
+    match /oauthStates/{stateHash} {
+      allow read, write: if false;
+    }
+
+    match /paymentRoutes/{routeId} {
+      allow read, write: if false;
+    }
+
+    match /businessIdempotency/{key} {
+      allow read, write: if false;
+    }
+
+    match /businessJoinIdempotency/{key} {
+      allow read, write: if false;
+    }
+
+    match /mpCheckoutIdempotency/{key} {
+      allow read, write: if false;
+    }
+
+    match /appointmentIdempotency/{key} {
+      allow read, write: if false;
+    }
+  }
+}

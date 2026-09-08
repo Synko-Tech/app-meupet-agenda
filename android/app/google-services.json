@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "566811424170",
+    "firebase_url": "https://meupet-agenda-app-default-rtdb.firebaseio.com",
+    "project_id": "meupet-agenda-app",
+    "storage_bucket": "meupet-agenda-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:566811424170:android:ee3ca536452976f18427d3",
+        "android_client_info": {
+          "package_name": "marchetta.meupet_agenda_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBlR2t3KBR4CXp45Ez8lN6YkDFI8Wzvnu4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

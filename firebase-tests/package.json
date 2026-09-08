@@ -1,0 +1,12 @@
+{
+  "name": "firebase-rules-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Automated test harness for firestore.rules and storage.rules against the Firebase emulators",
+  "scripts": {
+    "test": "node --test --test-concurrency=1 firestore.rules.test.mjs storage.rules.test.mjs firestore.indexes.test.mjs"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.1"
+  }
+}

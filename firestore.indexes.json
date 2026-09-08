@@ -1,0 +1,70 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "payments",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {
+          "fieldPath": "id_cliente",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    }
+  ],
+  "fieldOverrides": [
+    {
+      "collectionGroup": "userPrivate",
+      "fieldPath": "cpf",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "userPrivate",
+      "fieldPath": "cpfLast2",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "userPrivate",
+      "fieldPath": "address.postalCode",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "userPrivate",
+      "fieldPath": "address.street",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "userPrivate",
+      "fieldPath": "address.number",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "userPrivate",
+      "fieldPath": "address.complement",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "userPrivate",
+      "fieldPath": "address.neighborhood",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "userPrivate",
+      "fieldPath": "address.city",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "userPrivate",
+      "fieldPath": "address.state",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "userPrivate",
+      "fieldPath": "address.country",
+      "indexes": []
+    }
+  ]
+}

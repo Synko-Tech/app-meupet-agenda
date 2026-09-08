@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  flutter:
+    name: Dependencias, testes e build Android
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx4g
+
+    steps:
+      - name: Obter o codigo
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Configurar Java 17
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Configurar Flutter 3.47.1
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: '3.47.1'
+          cache: true
+
+      - name: Instalar dependencias
+        run: flutter pub get --enforce-lockfile
+
+      - name: Analisar o codigo
+        run: flutter analyze --no-pub
+
+      - name: Executar testes unitarios e de widgets
+        run: flutter test --no-pub --coverage --reporter expanded
+
+      - name: Gerar APK de depuracao
+        run: flutter build apk --debug --no-pub
+
+      - name: Disponibilizar APK
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: meupet-agenda-debug
+          path: build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Disponibilizar cobertura
+        if: ${{ !cancelled() && hashFiles('coverage/lcov.info') != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: cobertura-flutter
+          path: coverage/lcov.info
+          if-no-files-found: error
+          retention-days: 7
